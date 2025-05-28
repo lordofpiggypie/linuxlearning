@@ -1,0 +1,4 @@
+mkdir -p ~/.config/systemd/user/
+mv container-secure-nginx-8443.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now container-secure-nginx-8443.service

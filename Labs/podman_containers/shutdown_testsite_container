@@ -1,0 +1,6 @@
+#!/bin/bash
+
+CONTAINER_NAME=secure-nginx-testsite
+
+podman stop $CONTAINER_NAME
+podman rm $CONTAINER_NAME
