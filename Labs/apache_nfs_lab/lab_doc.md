@@ -1,244 +1,115 @@
-Lab Goals and RHCSA Concepts Covered
-This advanced lab touches several major RHCSA topics, including:
+Apache Web Server and NFS Interaction Lab:
 
-File sharing and permissions (NFS, filesystem ACLs)
+Scenario:
+	-Two virtual machines running RedHat 10. One server *minime* is running Apache webserver with ChatGPT Generated custom webpage. Second Server *nfs* is running an nfs server with an
+	LVM that mounts to the webserver with a shared directory hosting a ChatGPT custom webpage containing lab details. The NFS mount on the Apache server needs to be an on-demand
+	mount for scalability and resiliancy. HTTPS will use port 8443
 
-Security enforcement (SELinux contexts and policies)
+Steps:
 
-Network management (firewalld rules, port management)
+	1. Create VM minime on Hypervisor named "minime" with RHEL 10 server and install httpd
+		sudo dnf -y update
+		sudo dnf -y install epel-release
+		sudo dnf install httpd
+		sudo systemctl enable httpd
+		sudo systemctl start httpd
+	2. Move the httpd root directory and set up and configure HTTPS with SSL
+		sudo -u apache mkdir -p /srv/testste
+		sudo vim /etc/httpd/conf/httpd.conf
+		DocumentRoot "/srv/testsite"
+		Change directory files to /srv/testsite location
+		sudo systemctl daemon-reload
+		sudo systemctl enable httpd
+		sudo systemctl start httpd
+		sudo firewall-cmd --permanent --add-service=https
+		sudo firewall-cmd --zone=public --permanent --add-port=2049/tcp
+		sudo firewall-cmd --reload
+		sudo dnf install mod_ssl
+		sudo systemctl restart httpd
+		sudo openssl req -x509 -nodes -days 365 \
+   		 -newkey rsa:4096 \
+   		 -keyout /etc/pki/tls/private/selfsigned.key \
+   		 -out /etc/pki/tls/certs/selfsigned.crt
+		sudo chmod 600 /etc/pki/tls/private/selfsigned.key
+		sudo vim /etc/httpd/conf.d/ssl.conf
+			Listen 8443
+			<VirtualHost *:8443>
+   				DocumentRoot "/srv/testsite"
+    				ServerName minime
 
-Automation & Scheduling (Cron, scripting)
+    				SSLEngine on
+    				SSLCertificateFile /etc/pki/tls/certs/selfsigned.crt
+    				SSLCertificateKeyFile /etc/pki/tls/private/selfsigned.key
 
-Service management (systemd services)
+    				<Directory "/srv/testsite">
+        				AllowOverride None
+        				Require all granted
+    				</Directory>
 
-Storage management (LVM management, mounting persistent storage)
+    				ErrorLog logs/ssl_error_log
+    				TransferLog logs/ssl_access_log
+			</VirtualHost>
+		sudo systemctl restart httpd
+		We will set up a file share directory in httpd after the NFS Server
+	3. Set a static IP for minime
+		sudo nmcli connection modify enp0s3 ipv4.addresses 192.168.1.253/24 
+		sudo nmcli connection modify enp0s3 ipv4.gateway 192.168.1.254 
+		sudo nmcli connection modify enp0s3 ipv4.dns "8.8.8.8 8.8.4.4" 
+		sudo nmcli connection modify enp0s3 ipv4.method manual 
+		sudo nmcli connection down enp0s3 && sudo nmcli connection up enp0s3
+	4. Name the server
+		hostnamectl hostname minime
+	5. Create VM nfs on Hypervisor with RHEL 10 and install nfs
+		sudo dnf -y update
+		sudo dnf install epel-release
+		sudo dnf install nfs-utils
+		sudo systemctl enable --now nfs-server
+	6. Configure shared directory
+		sudo mkdir -p /srv/nfs/webdata
+		sudo chmod 770 /srv/nfs/webdata
+		sudo chown 48:48 /srv/nfs/webdata
+	7. Configure nfs exports
+		/srv/nfs/webdata  VM1_IP_ADDRESS(rw,sync,no_root_squash)
+		sudo exportfs -arv
+	8. Set Rich firewall rules
+		sudo firewall-cmd --permanent --zone=public \
+ 		  --add-rich-rule='rule family="ipv4" source address="192.168.1.0/24" service name="nfs" accept'
+		sudo firewall-cmd --permanent --zone=public \
+	 	  --add-rich-rule='rule family="ipv4" source address="192.168.1.0/24" service name="rpc-bind" accept'
+		sudo firewall-cmd --permanent --zone=public \
+		  --add-rich-rule='rule family="ipv4" source address="192.168.1.0/24" service name="mountd" accept'
+	0. Set static IP for "nfs"
+		sudo nmcli connection modify enp0s3 ipv4.addresses 192.168.1.253/24
+                sudo nmcli connection modify enp0s3 ipv4.gateway 192.168.1.254
+                sudo nmcli connection modify enp0s3 ipv4.dns "8.8.8.8 8.8.4.4"
+                sudo nmcli connection modify enp0s3 ipv4.method manual
+                sudo nmcli connection down enp0s3 && sudo nmcli connection up enp0s3
+		sudo hostnamectl hostname nfs
+	10. Configure "minime" for NFS mount
+		sudo dnf install -y httpd
+		sudo systemctl enable --now httpd
+		sudo vim /etc/httpd/conf.d/ssl.conf
+			<Directory "/srv/testsite/shared">
+				Options Indexes FollowSymLinks
+    				AllowOverride None
+    				Require all granted
+			</Directory>
+		sudo vim /etc/fstab
+		192.168.1.232:/srv/nfs/webdata /srv/testsite/shared nfs defaults,_netdev,x-systemd.automount  0 0
+		sudo mkdir -p /srv/testsite/shared
+		sudo chown -R apache:apache /srv/testside/shared
+		sudo semanage fcontext -a -t httpd_sys_rw_content_t '/var/www/html(/.*)?'
+		sudo restorecon -Rv /srv/testsite/
+	11. Set SELinux exception on "minime" so that httpd can reach nfs resources (Not best practice I dont think)
+		sudo setsebool -P httpd_use_nfs 1
+		sudo systemctl reload httpd
+	12. Mount the share on "minime"
+		sudo mount -a
+	13. Check mount status
+		mount | grep nfs
+		showmount -e 192.168.1.232
+		df -h | grep nfs
+	14. Add ChatGPT HTTP art to the httpd directories
+		on "minime" index.html @ /srv/testsite
+		on "nfs" lab_diagram.html @ /srv/nfs/webdata
 
-Remote management (SSH keys, secure remote administration)
-
-Basic Troubleshooting (system logs, journald)
-
-Lab Scenario
-You will set up a robust infrastructure simulating a web application environment. Your environment will include:
-
-VM1 (RHEL 9):
-Acts as your Web Application Server running Apache (HTTPD). It serves dynamic content generated by a bash script and mounts shared storage from an NFS server. SELinux and firewall rules must be explicitly set up.
-
-VM2 (RHEL 9):
-Acts as your NFS Storage Server, providing shared persistent storage. Configured with proper filesystem ACLs and NFS export restrictions.
-
-Host Laptop (Rocky Linux 9):
-Hosts your VMs and will manage automated backups of your web application data.
-
-Step-by-step Lab Outline
-1. Set up the Lab Environment
-Create two new VMs using KVM/libvirt:
-
-VM1: RHEL 9 Web Server (minimal installation)
-
-VM2: RHEL 9 Storage Server (minimal installation)
-
-Configure static IP addresses via NetworkManager CLI (nmcli) on both VMs.
-
-2. Configure NFS Storage Server (VM2)
-Install and enable NFS:
-
-bash
-Copy
-Edit
-sudo dnf install -y nfs-utils
-sudo systemctl enable --now nfs-server
-Create and configure shared directory:
-
-bash
-Copy
-Edit
-sudo mkdir -p /srv/nfs/webdata
-sudo chmod 770 /srv/nfs/webdata
-sudo chown nobody:nogroup /srv/nfs/webdata
-Configure exports in /etc/exports with ACL restrictions:
-
-bash
-Copy
-Edit
-/srv/nfs/webdata  VM1_IP_ADDRESS(rw,sync,no_root_squash)
-Reload NFS exports:
-
-bash
-Copy
-Edit
-sudo exportfs -arv
-Configure firewall:
-
-bash
-Copy
-Edit
-sudo firewall-cmd --permanent --add-service=nfs
-sudo firewall-cmd --permanent --add-service=rpc-bind
-sudo firewall-cmd --permanent --add-service=mountd
-sudo firewall-cmd --reload
-3. Configure Apache Web Server (VM1)
-Install Apache:
-
-bash
-Copy
-Edit
-sudo dnf install -y httpd
-sudo systemctl enable --now httpd
-Configure firewall for Apache:
-
-bash
-Copy
-Edit
-sudo firewall-cmd --permanent --add-service=http
-sudo firewall-cmd --reload
-Mount NFS share persistently via /etc/fstab:
-
-bash
-Copy
-Edit
-VM2_IP:/srv/nfs/webdata  /var/www/html/shared  nfs  defaults,_netdev  0 0
-Mount immediately:
-
-bash
-Copy
-Edit
-sudo mount -a
-4. Configure SELinux Policies
-Set SELinux contexts correctly for NFS and Apache:
-
-bash
-Copy
-Edit
-sudo semanage fcontext -a -t httpd_sys_content_t '/var/www/html/shared(/.*)?'
-sudo restorecon -Rv /var/www/html/shared
-Verify SELinux contexts:
-
-bash
-Copy
-Edit
-ls -Z /var/www/html/shared
-5. Dynamic Web Content with Bash Script
-Create a simple script (status.sh) on VM1 to dynamically show the status of mounted shares:
-
-bash
-Copy
-Edit
-#!/bin/bash
-echo "<html><body><h2>NFS Share Status:</h2>"
-if mountpoint -q /var/www/html/shared; then
-    echo "<p style='color:green;'>Mounted!</p>"
-else
-    echo "<p style='color:red;'>Not Mounted!</p>"
-fi
-echo "</body></html>"
-Save as /usr/local/bin/status.sh and make executable:
-
-bash
-Copy
-Edit
-sudo chmod +x /usr/local/bin/status.sh
-Configure Apache to serve dynamic content:
-
-bash
-Copy
-Edit
-sudo dnf install -y mod_cgi
-sudo systemctl restart httpd
-Then in /var/www/cgi-bin/status.sh:
-
-bash
-Copy
-Edit
-#!/bin/bash
-/usr/local/bin/status.sh
-Make executable:
-
-bash
-Copy
-Edit
-sudo chmod +x /var/www/cgi-bin/status.sh
-Test via http://vm1_ip/cgi-bin/status.sh.
-
-6. Automated Backups on Host Laptop
-Create a bash backup script on Rocky host to automatically backup web data from VM2 NFS share:
-
-bash
-Copy
-Edit
-#!/bin/bash
-DATE=$(date +%Y%m%d%H%M)
-mkdir -p ~/backups
-rsync -avz -e ssh user@VM2_IP:/srv/nfs/webdata ~/backups/webdata_$DATE
-Schedule via cron on host laptop:
-
-bash
-Copy
-Edit
-crontab -e
-Add:
-
-ruby
-Copy
-Edit
-0 */6 * * * /path/to/backup_script.sh
-Set up SSH key-based authentication from laptop to VM2 (no password backups).
-
-7. Storage Management (Extra Credit)
-On VM2, set up an additional logical volume (LVM), format it as XFS, and add as additional storage to /srv/nfs/webdata.
-
-bash
-Copy
-Edit
-sudo pvcreate /dev/vdb
-sudo vgcreate webvg /dev/vdb
-sudo lvcreate -n weblv -L 5G webvg
-sudo mkfs.xfs /dev/webvg/weblv
-Add to /etc/fstab and mount:
-
-bash
-Copy
-Edit
-/dev/webvg/weblv /srv/nfs/webdata xfs defaults 0 0
-Resize storage dynamically (grow filesystem without downtime).
-
-8. Systemd Services and Troubleshooting
-Create a custom systemd service on VM1 (checkmount.service) to monitor NFS mounts:
-
-ini
-Copy
-Edit
-[Unit]
-Description=Check NFS Mount
-
-[Service]
-Type=simple
-ExecStart=/usr/bin/mountpoint /var/www/html/shared
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-Enable and start:
-
-bash
-Copy
-Edit
-sudo systemctl enable --now checkmount.service
-Troubleshoot using:
-
-bash
-Copy
-Edit
-sudo journalctl -u checkmount.service
-Wrap-up and Documentation
-After completing these tasks, document:
-
-SELinux rules and adjustments made.
-
-Firewall configurations.
-
-Backup process and verification.
-
-Troubleshooting steps for common errors.
-
-Conclusion
-This lab scenario provides in-depth experience with essential RHCSA skills: storage management, networked file systems, SELinux security, system services, automation, scripting, and troubleshooting. This is precisely the kind of practical, hands-on knowledge you'll need to be fully prepared for the RHCSA and beyond!
